@@ -5,12 +5,8 @@ library(bslib)
 library(ggplot2)
 library(leaflet)
 library(reshape)
-library(ggthemes)
-library(hrbrthemes)
 library(ggthemr)
-library(bbplot)
-library(gganimate)
-#devtools::install_github('bbc/bbplot')
+
 
 #UI Component
 ui <- shinyUI(
@@ -67,6 +63,113 @@ ui <- shinyUI(
                             )
                           )
                  ),
+                 tabPanel("Results: Medal Tally",
+                          fluidPage(
+                            fluidRow(
+                              column(12, 
+                                     fluidRow(
+                                       column(2),
+                                       column(4,
+                                              wellPanel(
+                                                selectInput("resultsYearInput", "Select Year", "All")
+                                              )
+                                       ),
+                                       column(4,
+                                              wellPanel(
+                                                selectInput("resultsRegionInput", "Select Region", "All")
+                                              )
+                                       ),
+                                       column(2)
+                                     ),
+                                     
+                                     hr(),
+                                     column(12,
+                                            fluidRow(
+                                              column(2),
+                                              column(8,
+                                                     htmlOutput("resultsTally")),
+                                              column(2)
+                                            )
+                                     )
+                              ),
+                            )
+                          )
+                 ),
+                 tabPanel("Results: Map View",
+                          fluidPage(
+                            fluidRow(
+                              column(3, 
+                                     wellPanel(
+                                       selectInput("mapYearInput", "Select Year", "All"),
+                                       selectInput("mapRegionInput", "Select Region", "All")
+                                     ),
+                                     wellPanel(
+                                       radioButtons("mapViewInput", "Select Map View",
+                                                    choices=c('Participant Countries', 
+                                                              'Countries that have won Gold Medals', 
+                                                              'Countries that have won Silver Medals', 
+                                                              'Countries that have won Bronze Medals'),
+                                                    selected='Participant Countries')
+                                     )
+                              ),
+                              
+                              column(9,
+                                     htmlOutput("mapViewTitle"),
+                                     div(id="leaflet-map-container",
+                                         tags$img(src="spinner.gif", class="loading-spinner"),
+                                         leafletOutput("mapLeaflet", height=700)
+                                     ),
+                                     htmlOutput("mapViewCaption")
+                              )
+                            )
+                          )
+                 ),
+                 tabPanel("Country Profiles",
+                          fluidPage(
+                            fluidRow(
+                              column(3,
+                                     wellPanel(
+                                       selectInput("countryRegionInput", "Select Region", "All"),
+                                       selectInput("countryNameInput", "Select Country", "All")
+                                     ),
+                                     hr(),
+                                     htmlOutput("countryProfile")
+                              ),
+                              column(9,
+                                     plotOutput("countryYearResults"),
+                                     hr(),
+                                     htmlOutput("countrySportsResultsTitle"),
+                              )
+                            )
+                          )
+                 ),
+                 tabPanel("Sports and Events",
+                          fluidPage(
+                            fluidRow(
+                              column(3,
+                                     wellPanel(
+                                       selectInput("sportInput", "Select Sport", "Swimming")
+                                     )
+                              ),
+                              column(9,
+                                     plotOutput("SportsPlot")
+                              )
+                            ),
+                            
+                            hr(),
+                            
+                            fluidRow(
+                              column(3,
+                                     wellPanel(
+                                       selectInput("eventInput", "Select Event", "All")
+                                     )
+                              ),
+                              column(9,
+                                     plotOutput("EventsPlot")
+                              )          
+                            )
+                          )             
+                 ),
                  tags$head(
                    tags$link(rel="stylesheet", type="text/css", href="style.css")
                    )
@@ -119,7 +222,7 @@ flagBaseUrl <- 'flags/'
 
 
 #Server Component
-server <- function(input, output) {
+server <- function(input, output,session) {
   ###################################
   # Growth data
   ###################################
@@ -204,6 +307,350 @@ server <- function(input, output) {
       p(class="plot-note", "Hover on a point on the line graph to get more information.") 
     }
   })
+  
+  ###################################
+  # Results Tally
+  ###################################
+  
+  # update input dropdowns
+  updateSelectInput(session, "resultsYearInput", choices=uniqueYears)
+  updateSelectInput(session, "resultsRegionInput", choices=uniqueRegions)
+  
+  results.data <- reactive({
+    data <- results.df
+    # filters
+    data <- data[data$year == input$resultsYearInput, ] 
+    if (input$resultsRegionInput != 'All') {
+      data <- data[data$continent == input$resultsRegionInput, ]
+    }
+    # sort: gold, silver, bronze
+    data <- data[with(data, order(-gold, -silver, -bronze)), ]
+    data
+  })
+  
+  output$resultsTally <- renderUI({
+    if (nrow(results.data()) != 0) {
+      
+      resultsTable <- tags$table( style = "width:100%",
+        tags$tr(class="results-header",
+                tags$th(class="results-rank", "Rank"), 
+                tags$th(class="results-flag", "Flag"),
+                tags$th(class="results-country", "Country"),
+                tags$th(class="results-gold", "Gold"),
+                tags$th(class="results-silver", "Silver"),
+                tags$th(class="results-bronze", "Bronze"),
+                tags$th(class="results-total", "Total")
+        )
+      )
+      
+      for(i in 1:nrow(results.data())) {
+        row <- results.data()[i,]
+        resultsTable <- tagAppendChild(resultsTable,
+                                       tags$tr(class="results-row",
+                                               tags$td(class="results-rank", i),
+                                               tags$td(class="results-flag", 
+                                                       img(src=paste0(flagBaseUrl, row[2], '.png'),
+                                                           alt=paste0(row[3], ' flag'),
+                                                           width=80)),
+                                               tags$td(class="results-country", row[3]),
+                                               tags$td(class="results-gold", row[7]),
+                                               tags$td(class="results-silver", row[8]),
+                                               tags$td(class="results-bronze", row[9]),
+                                               tags$td(class="results-total", row[11])
+                                       )
+        )        
+      }      
+      
+      if (input$resultsYearInput == 'All') {
+        medalTallyTitle <- "Medal Tally (All years)"
+      } else {
+        medalTallyTitle <- paste0("Medal Tally in ", input$resultsYearInput) 
+      }
+      
+      div(
+        h2(id="medal-tally-title", medalTallyTitle),
+        div(id="results-tally", style = "width: 100%", resultsTable)
+      )
+    }
+  })
+  
+  ###################################
+  # Results Map
+  ###################################  
+  
+  # update input dropdowns
+  updateSelectInput(session, "mapYearInput", choices=uniqueYears)
+  updateSelectInput(session, "mapRegionInput", choices=uniqueRegions)
+  
+  map.data <- reactive({
+    data <- results.df
+    # filters
+    data <- data[data$year == input$mapYearInput, ] 
+    if (input$mapRegionInput != 'All') {
+      data <- data[data$continent == input$mapRegionInput, ]
+    }
+    data
+  })
+  
+  map.medals.data <- reactive({
+    data <- map.data()
+    if (nrow(data) > 0) {
+      if (grepl('Gold', input$mapViewInput)) {
+        data$popup <- paste0(data$gold, ' medals')
+        data <- data[data$gold > 0, ]
+      } else if (grepl('Silver', input$mapViewInput)) {
+        data$popup <- paste0(data$silver, ' medals')
+        data <- data[data$silver > 0, ]
+      } else {
+        data$popup <- paste0(data$bronze, ' medals')
+        data <- data[data$bronze > 0, ]
+      }
+    }
+    data
+  })
+  
+  output$mapLeaflet <- renderLeaflet({
+    leaflet.map <- leaflet(data=map.data()) %>%
+      addTiles()
+    
+    if (nrow(map.data()) > 0) {
+      
+      if (input$mapViewInput=='Participant Countries') {
+        customIcons <- awesomeIcons(
+          icon='flag',
+          iconColor='black',
+          library='glyphicon'
+          #markerColor=getRegionColor(map.data())
+        )
+        leaflet.map <- leaflet.map %>%
+          addAwesomeMarkers(~long, ~lat, label=~country, icon=customIcons)
+        
+        leaflet.map <- leaflet.map
+        
+      } else {
+        m.data <- map.medals.data()
+        
+        if (nrow(m.data) > 0) {
+          leaflet.map <- leaflet(data=m.data) %>%
+            addTiles()
+          
+          if (grepl('Gold', input$mapViewInput)) {
+            icon.url <- 'gold-medal-64.png'
+          } else if (grepl('Silver', input$mapViewInput)) {
+            icon.url <- 'silver-medal-64.png'
+          } else {
+            icon.url <- 'bronze-medal-64.png'
+          }
+          
+          # set icon size based on value
+          getIconSize <- function(m.data) {
+            sapply(m.data$total, function(total) {
+              if(total <= 10) {
+                16
+              } else if(total <= 50) {
+                24
+              } else if (total <= 100) {
+                32
+              } else {
+                48
+              }
+            })
+          }        
+          
+          medalIcons <- icons(iconUrl=icon.url, iconWidth=getIconSize(m.data), iconHeight=getIconSize(m.data))
+          
+          leaflet.map <- leaflet.map %>%
+            addMarkers(~long, ~lat, label=~country, 
+                       icon=medalIcons, 
+                       popup=~popup)
+        }
+      }
+      
+    }
+    
+    leaflet.map
+  })
+  
+  output$mapViewTitle <- renderUI({
+    if (input$mapYearInput == 'All') {
+      leafletSubtitle <- "(All years)"
+    } else {
+      hostData <- growth.df[growth.df$year==input$mapYearInput, ]
+      leafletSubtitle <- paste0(input$mapYearInput, " Games in ", hostData[1, "city"], ", ", hostData[1, "country"])
+    }
+    
+    div(
+      h1(id="leaflet-map-title", input$mapViewInput),
+      h2(id="leaflet-map-subtitle", leafletSubtitle)
+    )
+  })  
+  
+  output$mapViewCaption <- renderUI({
+    if (nrow(map.data()) == 0) {
+      p("No data available for the selected filters")
+    } else {
+      if (grepl('Medals', input$mapViewInput)) {
+        p(class="plot-note", "Click on a medal to find out how many were won")
+      }
+    }
+  })
+  ###################################
+  # Country Details data
+  ###################################  
+  
+  updateSelectInput(session, "countryRegionInput", choices=uniqueRegions)
+  
+  region.countries <- reactive({
+    if (input$countryRegionInput == 'All') {
+      as.list(sort(unique(results.df$country)))
+    } else {
+      as.list(sort(unique(results.df[results.df$continent==input$countryRegionInput, ]$country)))
+    }
+  })
+  
+  observe({
+    defaultCountry = NULL
+    if (input$countryRegionInput == 'All') {
+      defaultCountry='Australia' # default
+    }
+    updateSelectInput(session, "countryNameInput", choices=region.countries(), selected=defaultCountry)
+  })
+  
+  country.data <- reactive({
+    results.df[results.df$country==input$countryNameInput, ]
+  })
+  
+  country.misc.data <- reactive({
+    country.df <- country.data()
+    country.code <- country.df[1, ]$country.code
+    continent <- country.df[1, ]$continent
+    years.joined <- nrow(country.df) - 1 # deduct 'All' entry
+    first.join.year <- min(country.df$year)
+    total.gold <- country.df[country.df$year=='All', ]$gold
+    total.silver <- country.df[country.df$year=='All', ]$silver
+    total.bronze <- country.df[country.df$year=='All', ]$bronze
+    total.medals <- country.df[country.df$year=='All', ]$total
+    
+    list(country.code=country.code,
+         continent=continent,
+         years.joined=years.joined,
+         first.join.year=first.join.year,
+         total.gold=total.gold,
+         total.silver=total.silver,
+         total.bronze=total.bronze,
+         total.medals=total.medals)
+  })
+  
+  output$countryProfile <- renderUI({
+    div(id="country-profile-details",
+        img(id="country-profile-flag", 
+            src=paste0(flagBaseUrl, country.misc.data()[['country.code']], '.png'),
+            alt=paste0(input$countryNameInput, ' flag'),
+            width=120),
+        h1(id="country-profile-name", input$countryNameInput),
+        tags$table(id="country-profile-table", border="1",
+                   tags$tr(tags$td(class="country-profile-label", "Region"), tags$td(class="country-profile-value", country.misc.data()[['continent']])),
+                   tags$tr(tags$td(class="country-profile-label", "# Years joined"), tags$td(class="country-profile-value", country.misc.data()[['years.joined']])),
+                   tags$tr(tags$td(class="country-profile-label", "Year first joined"), tags$td(class="country-profile-value", country.misc.data()[['first.join.year']])),
+                   tags$tr(tags$td(class="country-profile-label", "Gold medals"), tags$td(class="country-profile-value", country.misc.data()[['total.gold']])),
+                   tags$tr(tags$td(class="country-profile-label", "Silver medals"), tags$td(class="country-profile-value", country.misc.data()[['total.silver']])),        
+                   tags$tr(tags$td(class="country-profile-label", "Bronze medals"), tags$td(class="country-profile-value", country.misc.data()[['total.bronze']])),        
+                   tags$tr(tags$td(class="country-profile-label", "Total medals"), tags$td(class="country-profile-value", country.misc.data()[['total.medals']]))        
+        )  
+    )
+  })
+  
+  output$countryYearResults <- renderPlot({
+    year.df <- country.data()
+    year.df <- year.df[year.df$year!='All', ]
+    year.df <- year.df[, c(1, 7, 8, 9)]
+    #cat(file=stderr(), str(year.df))
+    year.df <- melt(year.df, id='year')
+    names(year.df) <- c('year', 'medal.class', 'medal.count')
+    #cat(file=stderr(), str(year.df))
+    
+    ggplot(year.df, aes(x=year, y=medal.count, fill=medal.class)) + 
+      geom_bar(stat='identity', color='black') +
+      labs(x='Year', y='Medals won',
+           title=paste0('Medals won by ', input$countryNameInput, ' by Year')) +
+      theme(plot.title=element_text(size=22, hjust=0.5, face="bold")) +
+      scale_fill_manual("legend", values=c('gold'='#C98910', 'silver'='#A8A8A8', 'bronze'='#965A38')) +
+      scale_y_continuous(labels=function(x) { floor(x) })
+  })
+  
+  country.sports.data <- reactive({
+    data <- sports.df[sports.df$country==input$countryNameInput, ]
+    # get total
+    data$total <- data$gold + data$silver + data$bronze
+    # select only needed columns
+    data <- data[, c('sport', 'country', 'total')]
+    # aggregate: sum
+    data.agg <- aggregate(data[3], data[-3], sum)
+    if (nrow(data.agg) > 0) {
+      # sort descending
+      data.agg <- data.agg[with(data.agg, order(-total)), ]
+    }
+    # return aggregate
+    data.agg
+  })
+  
+  ###################################
+  # Sports and Events
+  ###################################    
+  
+  updateSelectInput(session, "sportInput", choices=uniqueSports)
+  
+  observe({
+    if (input$sportInput != '') {
+      events <- sports.df[sports.df$sport==input$sportInput, c('event')]
+      updateSelectInput(session, "eventInput", choices=events)
+    }
+  })
+  
+  sport.data <- reactive({
+    data <- sports.df[sports.df$sport == input$sportInput, c('country', 'total')]
+    if (nrow(data) > 0) {
+      data.agg <- aggregate(data[2], data[-2], sum)  
+    } else {
+      data.agg <- NULL 
+    }
+    data.agg
+  })
+  
+  event.data <- reactive({
+    data <- sports.df[(sports.df$sport == input$sportInput & sports.df$event == input$eventInput), c('country', 'total')]
+    if (nrow(data) > 0) {
+      data.agg <- aggregate(data[2], data[-2], sum)
+    } else {
+      data.agg <- NULL
+    }
+    data.agg
+  })
+  
+  output$SportsPlot <- renderPlot({
+    data <- sport.data()
+    if (!is.null(data)) {
+      ggplot(data, aes(x=reorder(country, total), y=total)) + 
+        geom_bar(stat='identity', color='white', fill='dodgerblue4') +
+        labs(x='Country', y='Medals won', title=paste0('Medals won in ', input$sportInput)) +
+        theme(plot.title=element_text(size=20, hjust=0.5, face="bold")) +      
+        scale_y_continuous(labels=function(x) { floor(x) }) +
+        coord_flip()
+    }
+  })
+  
+  output$EventsPlot <- renderPlot({
+    data <- event.data()
+    if (!is.null(data)) {
+      ggplot(data, aes(x=reorder(country, total), y=total)) + 
+        geom_bar(stat='identity', color='white', fill='deepskyblue3') +
+        labs(x='Country', y='Medals won', title=paste0('Medals won in ', input$sportInput, ': ', input$eventInput)) +
+        theme(plot.title=element_text(size=20, hjust=0.5, face="bold")) +      
+        scale_y_continuous(labels=function(x) { floor(x) }) +
+        coord_flip()  
+    }
+  })
+  
 }
 
 shinyApp(ui, server)
